@@ -1,0 +1,271 @@
+From 935654f161dcc2b2d63259cca9e1490fd3a05f39 Mon Sep 17 00:00:00 2001
+From: fengmushu <fengmushu@gmail.com>
+Date: Wed, 27 Feb 2019 20:46:07 +0800
+Subject: [PATCH] fixup WANTCRC timeout
+
+---
+ src/lsz.c | 93 ++++++++++++++++++++++++++++---------------------------
+ 1 file changed, 48 insertions(+), 45 deletions(-)
+
+diff --git a/src/lsz.c b/src/lsz.c
+index e9e4660..de36dda 100644
+--- a/src/lsz.c
++++ b/src/lsz.c
+@@ -60,9 +60,11 @@ extern char *strstr();
+ extern int errno;
+ #endif
+ 
+-unsigned Baudrate=2400;	/* Default, should be set by first mode() call */
+-unsigned Txwindow;	/* Control the size of the transmitted window */
+-unsigned Txwspac;	/* Spacing between zcrcq requests */
++#define TX_WIN_SIZE 2048
++
++unsigned Baudrate=115200;	/* Default, should be set by first mode() call */
++unsigned Txwindow=TX_WIN_SIZE;	/* Control the size of the transmitted window */
++unsigned Txwspac=TX_WIN_SIZE/4;	/* Spacing between zcrcq requests */
+ unsigned Txwcnt;	/* Counter used to space ack requests */
+ size_t Lrxpos;		/* Receiver's last reported offset */
+ int errors;
+@@ -1131,7 +1133,7 @@ wcs(const char *oname, const char *remotename)
+ 	case ERROR:
+ #ifdef ENABLE_SYSLOG
+ 		if (enable_syslog)
+-			lsyslog(LOG_INFO, _("%s/%s: error occured"),protname(),shortname);
++			lsyslog(LOG_INFO, _("%d,%s/%s: error occured\n"), __LINE__,protname(),shortname);
+ #endif
+ 		return ERROR;
+ 	case ZSKIP:
+@@ -1146,7 +1148,7 @@ wcs(const char *oname, const char *remotename)
+ 	{
+ #ifdef ENABLE_SYSLOG
+ 		if (enable_syslog)
+-			lsyslog(LOG_INFO, _("%s/%s: error occured"),protname(),shortname);
++			lsyslog(LOG_INFO, _("%d,%s/%s: error occured\n"), __LINE__,protname(),shortname);
+ #endif
+ 		return ERROR;
+ 	}
+@@ -1197,7 +1199,7 @@ wctxpn(struct zm_fileinfo *zi)
+ 			vstringf(_("Sending %s, %ld blocks: "),
+ 			  zi->fname, (long) (f.st_size>>7));
+ 		}
+-		vstringf(_("Give your local XMODEM receive command now."));
++		vstringf(_("Give your local XMODEM receive command now.\n"));
+ 		vstring("\r\n");
+ 		return OK;
+ 	}
+@@ -1240,7 +1242,7 @@ wctxpn(struct zm_fileinfo *zi)
+ 		  (unsigned int)((no_unixmode) ? 0 : f.st_mode), 
+ 		  Filesleft, Totalleft);
+ 	if (Verbose)
+-		vstringf(_("Sending: %s\n"),txbuf);
++		lsyslog(LOG_INFO, _("Sending: %s\n"),txbuf);
+ 	Totalleft -= f.st_size;
+ 	if (--Filesleft <= 0)
+ 		Totalleft = 0;
+@@ -1310,6 +1312,7 @@ getnak(void)
+ 			if ((firstch = READLINE_PF(20)) == CAN && Lastrx == CAN)
+ 				return TRUE;
+ 		default:
++			lsyslog(LOG_INFO, "%s - unknown[%-4d:%c]\n", __func__, firstch, firstch);
+ 			break;
+ 		}
+ 		Lastrx = firstch;
+@@ -1638,17 +1641,21 @@ getzrxinit(void)
+ 					zsendline_init();
+ 			}
+ 			Rxbuflen = (0377 & Rxhdr[ZP0])+((0377 & Rxhdr[ZP1])<<8);
+-			if ( !(Rxflags & CANFDX))
+-				Txwindow = 0;
+-			vfile("Rxbuflen=%d Tframlen=%d", Rxbuflen, Tframlen);
++
++			// if ( !(Rxflags & CANFDX))
++				// Txwindow = 0;
++
++			lsyslog(LOG_INFO, "Rxbuflen=%d Tframlen=%d", Rxbuflen, Tframlen);
+ 			if ( play_with_sigint)
+ 				signal(SIGINT, SIG_IGN);
+-			io_mode(io_mode_fd,2);	/* Set cbreak, XON/XOFF, etc. */
++
++			/* ROY: fixup WANTCRC timeout ... */
++			// io_mode(io_mode_fd,2);	/* Set cbreak, XON/XOFF, etc. */
+ #ifndef READCHECK
+ 			/* Use MAX_BLOCK byte frames if no sample/interrupt */
+ 			if (Rxbuflen < 32 || Rxbuflen > MAX_BLOCK) {
+ 				Rxbuflen = MAX_BLOCK;
+-				vfile("Rxbuflen=%d", Rxbuflen);
++				lsyslog(LOG_INFO, "Rxbuflen=%d", Rxbuflen);
+ 			}
+ #endif
+ 			/* Override to force shorter frame length */
+@@ -1656,7 +1663,7 @@ getzrxinit(void)
+ 				Rxbuflen = Tframlen;
+ 			if ( !Rxbuflen)
+ 				Rxbuflen = 1024;
+-			vfile("Rxbuflen=%d", Rxbuflen);
++			lsyslog(LOG_INFO, "Rxbuflen=%d", Rxbuflen);
+ 
+ 			/* If using a pipe for testing set lower buf len */
+ 			fstat(0, &f);
+@@ -1695,8 +1702,8 @@ getzrxinit(void)
+ 				blklen = Rxbuflen;
+ 			if (blkopt && blklen > blkopt)
+ 				blklen = blkopt;
+-			vfile("Rxbuflen=%d blklen=%d", Rxbuflen, blklen);
+-			vfile("Txwindow = %u Txwspac = %d", Txwindow, Txwspac);
++			lsyslog(LOG_INFO, "Rxbuflen=%d blklen=%d", Rxbuflen, blklen);
++			lsyslog(LOG_INFO, "Txwindow = %u Txwspac = %d", Txwindow, Txwspac);
+ 			Rxtimeout=old_timeout;
+ 			return (sendzsinit());
+ 		case ZCAN:
+@@ -1774,7 +1781,8 @@ again:
+ 		c = zgethdr(Rxhdr, 1, &rxpos);
+ 		switch (c) {
+ 		case ZRINIT:
+-			while ((c = READLINE_PF(50)) > 0)
++			lsyslog(LOG_INFO, "%s:%d ZRINIT %d-%c\n", __func__, __LINE__, c, c);
++			while ((c = READLINE_PF(50)) > 0) 
+ 				if (c == ZPAD) {
+ 					goto again;
+ 				}
+@@ -1783,26 +1791,26 @@ again:
+ 			continue;
+ 		case ZRQINIT:  /* remote site is sender! */
+ 			if (Verbose)
+-				vstringf(_("got ZRQINIT"));
+-			DO_SYSLOG((LOG_INFO, "%s/%s: got ZRQINIT - sz talks to sz",
++				vstringf(_("got ZRQINIT\n"));
++			DO_SYSLOG((LOG_INFO, "%s/%s: got ZRQINIT - sz talks to sz\n",
+ 					   shortname,protname()));
+ 			return ERROR;
+ 		case ZCAN:
+ 			if (Verbose)
+-				vstringf(_("got ZCAN"));
+-			DO_SYSLOG((LOG_INFO, "%s/%s: got ZCAN - receiver canceled",
++				vstringf(_("got ZCAN\n"));
++			DO_SYSLOG((LOG_INFO, "%s/%s: got ZCAN - receiver canceled\n",
+ 					   shortname,protname()));
+ 			return ERROR;
+ 		case TIMEOUT:
+-			DO_SYSLOG((LOG_INFO, "%s/%s: got TIMEOUT",
++			DO_SYSLOG((LOG_INFO, "%s/%s: got TIMEOUT\n",
+ 					   shortname,protname()));
+ 			return ERROR;
+ 		case ZABORT:
+-			DO_SYSLOG((LOG_INFO, "%s/%s: got ZABORT",
++			DO_SYSLOG((LOG_INFO, "%s/%s: got ZABORT\n",
+ 					   shortname,protname()));
+ 			return ERROR;
+ 		case ZFIN:
+-			DO_SYSLOG((LOG_INFO, "%s/%s: got ZFIN",
++			DO_SYSLOG((LOG_INFO, "%s/%s: got ZFIN\n",
+ 					   shortname,protname()));
+ 			return ERROR;
+ 		case ZCRC:
+@@ -1861,8 +1869,8 @@ again:
+ 			}
+ #endif
+ 
+-			vfile("receiver skipped");
+-			DO_SYSLOG((LOG_INFO, "%s/%s: receiver skipped",
++			vfile("receiver skipped\n");
++			DO_SYSLOG((LOG_INFO, "%s/%s: receiver skipped\n",
+ 					   shortname, protname()));
+ 			return c;
+ 		case ZRPOS:
+@@ -1875,8 +1883,8 @@ again:
+ #endif
+ 			if (rxpos && fseek(input_f, (long) rxpos, 0)) {
+ 				int er=errno;
+-				vfile("fseek failed: %s", strerror(er));
+-				DO_SYSLOG((LOG_INFO, "%s/%s: fseek failed: %s",
++				vfile("fseek failed: %s\n", strerror(er));
++				DO_SYSLOG((LOG_INFO, "%s/%s: fseek failed: %s\n",
+ 						   shortname, protname(), strerror(er)));
+ 				return ERROR;
+ 			}
+@@ -1938,19 +1946,19 @@ zsendfdata (struct zm_fileinfo *zi)
+ 		default:
+ 			if (input_f)
+ 				fclose (input_f);
+-			DO_SYSLOG((LOG_INFO, "%s/%s: got %d",
++			DO_SYSLOG((LOG_INFO, "%s/%s: got %d\n",
+ 					   shortname, protname(), c));
+ 			return ERROR;
+ 		case ZCAN:
+ 			if (input_f)
+ 				fclose (input_f);
+-			DO_SYSLOG((LOG_INFO, "%s/%s: got ZCAN",
++			DO_SYSLOG((LOG_INFO, "%s/%s: got ZCAN\n",
+ 					   shortname, protname(), c));
+ 			return ERROR;
+ 		case ZSKIP:
+ 			if (input_f)
+ 				fclose (input_f);
+-			DO_SYSLOG((LOG_INFO, "%s/%s: got ZSKIP",
++			DO_SYSLOG((LOG_INFO, "%s/%s: got ZSKIP\n",
+ 					   shortname, protname(), c));
+ 			return c;
+ 		case ZACK:
+@@ -2012,15 +2020,15 @@ zsendfdata (struct zm_fileinfo *zi)
+ 		if (zi->eof_seen) {
+ 			e = ZCRCE;
+ 			if (Verbose>3)
+-				vstring("e=ZCRCE/eof seen");
++				vstring("e=ZCRCE/eof seen\n");
+ 		} else if (junkcount > 3) {
+ 			e = ZCRCW;
+ 			if (Verbose>3)
+-				vstring("e=ZCRCW/junkcount > 3");
++				vstring("e=ZCRCW/junkcount > 3\n");
+ 		} else if (bytcnt == Lastsync) {
+ 			e = ZCRCW;
+ 			if (Verbose>3)
+-				vstringf("e=ZCRCW/bytcnt == Lastsync == %ld", 
++				vstringf("e=ZCRCW/bytcnt == Lastsync == %ld\n", 
+ 					(unsigned long) Lastsync);
+ #if 0
+ 		/* what is this good for? Rxbuflen/newcnt normally are short - so after
+@@ -2036,11 +2044,11 @@ zsendfdata (struct zm_fileinfo *zi)
+ 			Txwcnt = 0;
+ 			e = ZCRCQ;
+ 			if (Verbose>3)
+-				vstring("e=ZCRCQ/Window");
++				vstring("e=ZCRCQ/Window\n");
+ 		} else {
+ 			e = ZCRCG;
+ 			if (Verbose>3)
+-				vstring("e=ZCRCG");
++				vstring("e=ZCRCG\n");
+ 		}
+ 		if ((Verbose > 1 || min_bps || stop_time)
+ 			&& (not_printed > (min_bps ? 3 : 7) 
+@@ -2074,21 +2082,16 @@ zsendfdata (struct zm_fileinfo *zi)
+ 				}
+ 			}
+ 			if (stop_time && now>=stop_time) {
+-				/* too bad */
+-				if (Verbose) {
+-					vstring(_("zsendfdata: reached stop time"));
+-					vstring("\r\n");
+-				}
+-				DO_SYSLOG((LOG_INFO, "%s/%s: reached stop time",
++				DO_SYSLOG((LOG_INFO, "%s/%s: reached stop time\n",
+ 						   shortname, protname()));
+ 				return ERROR;
+ 			}
+ 
+ 			if (Verbose > 1) {
+-				vchar ('\r');
+-				vstringf (_("Bytes Sent:%7ld/%7ld   BPS:%-8ld ETA %02d:%02d  "),
+-					 (long) zi->bytes_sent, (long) zi->bytes_total, 
+-					last_bps, minleft, secleft);
++				lsyslog(LOG_INFO,_("Bytes Sent:%7ld/%7ld   BPS:%-8ld ETA %02d:%02d  \n"),
++					 (long) zi->bytes_sent, (long) zi->bytes_total, last_bps, minleft, secleft);
++				vstringf(_("Bytes Sent:%7ld/%7ld   BPS:%-8ld ETA %02d:%02d  \n"),
++					 (long) zi->bytes_sent, (long) zi->bytes_total, last_bps, minleft, secleft);
+ 			}
+ 			last_txpos = zi->bytes_sent;
+ 		} else if (Verbose)
+-- 
+2.20.1
+
